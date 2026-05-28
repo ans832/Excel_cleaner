@@ -312,6 +312,28 @@ html, body, [class*="css"] {
     background: rgba(124,58,237,0.12) !important;
     color: var(--accent1) !important;
 }
+
+/* ── Page Link overrides ── */
+[data-testid="stPageLink"] a {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 100% !important;
+    background: linear-gradient(135deg, #7c3aed, #6d28d9) !important;
+    color: white !important;
+    font-weight: 600 !important;
+    border-radius: 10px !important;
+    padding: 0.65rem 1rem !important;
+    border: none !important;
+    box-shadow: 0 4px 15px rgba(124,58,237,0.2) !important;
+    text-decoration: none !important;
+    transition: all 0.25s !important;
+}
+[data-testid="stPageLink"] a:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 25px rgba(124,58,237,0.3) !important;
+    color: white !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -325,17 +347,27 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── File uploader ─────────────────────────────────────────────────────────────
-uploaded_file = st.file_uploader(
-    "📂  Drag & drop your Excel file here, or click to browse",
-    type=["xlsx"],
-    help="Supports .xlsx format",
-)
+if "df" not in st.session_state:
+    uploaded_file = st.file_uploader(
+        "📂  Drag & drop your Excel file here, or click to browse",
+        type=["xlsx"],
+        help="Supports .xlsx format",
+    )
+else:
+    uploaded_file = None
 
 # ── Processing ────────────────────────────────────────────────────────────────
 if uploaded_file:
     with st.spinner("🔍  Analysing your data..."):
         df = pd.read_excel(uploaded_file)
+        st.session_state.df = df
+        st.session_state.cleaned = False  # Reset cleaning state on new upload
+elif "df" in st.session_state:
+    df = st.session_state.df
+else:
+    df = None
 
+if df is not None:
     complete_rows = df.dropna()
     missing_rows  = df[df.isnull().any(axis=1)]
 
@@ -368,6 +400,14 @@ if uploaded_file:
         <span>File processed successfully — your download files are ready below.</span>
     </div>
     """, unsafe_allow_html=True)
+
+    if missing > 0:
+        st.page_link("pages/fill_page.py", label="🛠️ Fill Missing Values Interactively", icon="🛠️")
+
+    st.markdown("<div style='margin-bottom: 0.5rem;'></div>", unsafe_allow_html=True)
+    if st.button("🔄 Upload a Different File / Start Fresh"):
+        st.session_state.clear()
+        st.rerun()
 
     # ── Preview tabs ──────────────────────────────────────────────────────
     st.markdown('<div class="section-title">📊 Data Preview</div>', unsafe_allow_html=True)
