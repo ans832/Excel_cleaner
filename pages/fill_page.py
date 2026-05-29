@@ -361,6 +361,94 @@ else:
             fill_values[col] = fill_value
             st.markdown("<div style='margin-bottom: 1.5rem;'></div>", unsafe_allow_html=True)
             
+        # ── Quick Clean: Multiple Phones/Emails ───────────────────────────────
+        import re
+
+        phone_multi_count = 0
+        email_multi_count = 0
+
+        for col in df.columns:
+            if "phone" in col.lower() or "mobile" in col.lower():
+                phone_multi_count += df[col].astype(str).str.contains(
+                    r'[,;/|]',
+                    regex=True,
+                    na=False
+                ).sum()
+
+            if "email" in col.lower():
+                email_multi_count += df[col].astype(str).str.contains(
+                    r'[,;/|]',
+                    regex=True,
+                    na=False
+                ).sum()
+
+        if "phone_clean_success" in st.session_state:
+            st.success(st.session_state.phone_clean_success)
+            del st.session_state.phone_clean_success
+
+        if "email_clean_success" in st.session_state:
+            st.success(st.session_state.email_clean_success)
+            del st.session_state.email_clean_success
+
+        if phone_multi_count > 0 or email_multi_count > 0:
+            st.markdown('<div class="section-title">🧹 Multi-Value Clean Up</div>', unsafe_allow_html=True)
+
+            if phone_multi_count > 0:
+                st.markdown(f"""
+                <div class="dl-card">
+                    <div class="dl-card-title">
+                    📱 Multiple Phone Numbers Found
+                    </div>
+                    <div class="dl-card-desc">
+                    {phone_multi_count} rows contain more than one phone number.
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                remove_phone_btn = st.button(
+                    "📱 Keep Only First Phone Number"
+                )
+                if remove_phone_btn:
+                    for col in df.columns:
+                        if (
+                            "phone" in col.lower()
+                            or "mobile" in col.lower()
+                            or "contact" in col.lower()
+                        ):
+                            df[col] = df[col].apply(
+                                lambda x: re.split(r'[,;/|]', str(x))[0].strip() if pd.notnull(x) and str(x) not in ['nan', 'None'] else x
+                            )
+                    st.session_state.df = df
+                    st.session_state.phone_clean_success = f"Removed extra phone numbers from {phone_multi_count} rows"
+                    st.rerun()
+
+            if email_multi_count > 0:
+                st.markdown(f"""
+                <div class="dl-card">
+                    <div class="dl-card-title">
+                    📧 Multiple Emails Found
+                    </div>
+                    <div class="dl-card-desc">
+                    {email_multi_count} rows contain more than one email address.
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                remove_email_btn = st.button(
+                    "📧 Keep Only First Email Address"
+                )
+                if remove_email_btn:
+                    for col in df.columns:
+                        if "email" in col.lower():
+                            df[col] = df[col].apply(
+                                lambda x: re.split(r'[,;/|]', str(x))[0].strip() if pd.notnull(x) and str(x) not in ['nan', 'None'] else x
+                            )
+                    st.session_state.df = df
+                    st.session_state.email_clean_success = f"Removed extra emails from {email_multi_count} rows"
+                    st.rerun()
+
+            st.markdown("<div style='margin-bottom: 1.5rem;'></div>", unsafe_allow_html=True)
+
         st.markdown('<div class="section-title">⚙️ Process Cleaned Dataset</div>', unsafe_allow_html=True)
         
         # Action button
