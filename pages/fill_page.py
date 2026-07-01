@@ -1,6 +1,109 @@
 import streamlit as st
 import pandas as pd
 import io
+import re
+
+
+def is_missing_value(value):
+    if pd.isna(value):
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"", "nan", "none", "null"}
+    return False
+
+
+def is_email_column(column_name):
+    return "email" in str(column_name).lower()
+
+
+def is_phone_column(column_name):
+    lowered = str(column_name).lower()
+    return "phone" in lowered or "mobile" in lowered or "contact" in lowered
+
+
+def is_phone_like(value):
+    return bool(re.fullmatch(r"[\+\d\-\s\(\)]{7,}", str(value).strip()))
+
+
+def is_email_like(value):
+    return bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", str(value).strip()))
+
+
+def pick_first_relevant(parts, column_name):
+    for part in parts:
+        clean_part = part.strip()
+        if not clean_part:
+            continue
+        if is_email_column(column_name) and is_email_like(clean_part):
+            return clean_part
+        if is_phone_column(column_name) and is_phone_like(clean_part):
+            return clean_part
+    return parts[0].strip()
+
+
+def split_multi_value(value, column_name):
+    if value is None or pd.isna(value):
+        return value
+
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none", "null"}:
+        return value
+
+    if re.search(r"[,;/|]", text):
+        parts = [part.strip() for part in re.split(r"[,;/|]", text) if part.strip()]
+        if len(parts) > 1:
+            return pick_first_relevant(parts, column_name)
+
+    tokens = [token.strip() for token in re.split(r"\s+", text) if token.strip()]
+    if len(tokens) > 1:
+        if is_phone_column(column_name) and all(is_phone_like(token) for token in tokens):
+            return tokens[0]
+        if is_email_column(column_name) and all(is_email_like(token) for token in tokens):
+            return tokens[0]
+
+    return text
+
+
+def generate_unique_email(base_value, used_values):
+    base_value = str(base_value).strip()
+    if not base_value:
+        base_value = "dummy@gmail.com"
+    if "@" not in base_value:
+        base_value = f"{base_value}@gmail.com"
+
+    local_part, domain = base_value.split("@", 1)
+    candidate = base_value
+    counter = 1
+
+    while candidate.lower() in used_values:
+        candidate = f"{local_part}{counter}@{domain}"
+        counter += 1
+
+    used_values.add(candidate.lower())
+    return candidate
+
+
+def fill_missing_values(series, fill_value, column_name):
+    series = series.copy()
+    if fill_value is None:
+        return series
+
+    fill_value = str(fill_value).strip()
+    if not fill_value:
+        return series
+
+    if is_email_column(column_name):
+        used_values = set()
+        for idx, value in series.items():
+            if is_missing_value(value):
+                generated_value = generate_unique_email(fill_value, used_values)
+                series.at[idx] = generated_value
+            else:
+                used_values.add(str(value).strip().lower())
+        return series
+
+    return series.apply(lambda x: fill_value if is_missing_value(x) else x)
+
 
 # ── Page config ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -332,7 +435,15 @@ else:
         st.markdown('<div class="section-title">📝 Missing Values Review</div>', unsafe_allow_html=True)
         
         fill_values = {}
-        
+        columns_to_delete = []
+
+        st.multiselect(
+            "🗑️ Delete full columns from the cleaned file",
+            options=list(df.columns),
+            default=[],
+            key="columns_to_delete"
+        )
+
         # Loop through all columns having missing values
         for col in missing_columns:
             missing_count = df[col].isnull().sum()
@@ -362,22 +473,20 @@ else:
             st.markdown("<div style='margin-bottom: 1.5rem;'></div>", unsafe_allow_html=True)
             
         # ── Quick Clean: Multiple Phones/Emails ───────────────────────────────
-        import re
-
         phone_multi_count = 0
         email_multi_count = 0
 
         for col in df.columns:
-            if "phone" in col.lower() or "mobile" in col.lower():
+            if is_phone_column(col):
                 phone_multi_count += df[col].astype(str).str.contains(
-                    r'[,;/|]',
+                    r'[,;/|]|\s+',
                     regex=True,
                     na=False
                 ).sum()
 
-            if "email" in col.lower():
+            if is_email_column(col):
                 email_multi_count += df[col].astype(str).str.contains(
-                    r'[,;/|]',
+                    r'[,;/|]|\s+',
                     regex=True,
                     na=False
                 ).sum()
@@ -410,14 +519,8 @@ else:
                 )
                 if remove_phone_btn:
                     for col in df.columns:
-                        if (
-                            "phone" in col.lower()
-                            or "mobile" in col.lower()
-                            or "contact" in col.lower()
-                        ):
-                            df[col] = df[col].apply(
-                                lambda x: re.split(r'[,;/|]', str(x))[0].strip() if pd.notnull(x) and str(x) not in ['nan', 'None'] else x
-                            )
+                        if is_phone_column(col):
+                            df[col] = df[col].apply(lambda x: split_multi_value(x, col))
                     st.session_state.df = df
                     st.session_state.phone_clean_success = f"Removed extra phone numbers from {phone_multi_count} rows"
                     st.rerun()
@@ -439,10 +542,8 @@ else:
                 )
                 if remove_email_btn:
                     for col in df.columns:
-                        if "email" in col.lower():
-                            df[col] = df[col].apply(
-                                lambda x: re.split(r'[,;/|]', str(x))[0].strip() if pd.notnull(x) and str(x) not in ['nan', 'None'] else x
-                            )
+                        if is_email_column(col):
+                            df[col] = df[col].apply(lambda x: split_multi_value(x, col))
                     st.session_state.df = df
                     st.session_state.email_clean_success = f"Removed extra emails from {email_multi_count} rows"
                     st.rerun()
@@ -456,8 +557,13 @@ else:
             st.session_state.cleaned = True
             
             cleaned_df = df.copy()
+            selected_columns_to_delete = st.session_state.get("columns_to_delete", [])
+            if selected_columns_to_delete:
+                cleaned_df = cleaned_df.drop(columns=selected_columns_to_delete, errors="ignore")
+
             for col, value in fill_values.items():
-                cleaned_df[col] = cleaned_df[col].fillna(value)
+                if col in cleaned_df.columns:
+                    cleaned_df[col] = fill_missing_values(cleaned_df[col], value, col)
             
             st.session_state.cleaned_df = cleaned_df
             
